@@ -8,3 +8,4 @@ Tools/bochs
 
 # files
 ./Tools/FixVhdWr/FixVhdWr
+**/*.bin
