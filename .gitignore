@@ -2,6 +2,9 @@
 test
 config
 VirtualMachines
+.vscode
+
+Tools/bochs
 
 # files
 ./Tools/FixVhdWr/FixVhdWr
