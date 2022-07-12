@@ -1,0 +1,7 @@
+# folders
+test
+config
+VirtualMachines
+
+# files
+./Tools/FixVhdWr/FixVhdWr

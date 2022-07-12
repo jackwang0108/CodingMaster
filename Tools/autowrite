@@ -1,0 +1,101 @@
+#! /home/jack/miniconda3/bin/python
+
+import os
+import json
+import argparse
+from typing import *
+from pathlib import Path
+
+
+class Main:
+    config_path = Path(__file__).resolve(
+    ).parent.parent.joinpath("config", "config.json")
+
+    def __init__(
+        self,
+        lba: int,
+        bin_path: Path,
+        vhd_path: Optional[Path] = None,
+        fixvhdwr_path: Optional[Path] = None
+    ) -> None:
+        self.lba = lba
+        self.bin_path = bin_path.absolute()
+        if vhd_path is None:
+            assert self.load_cache(), f"加载VHD文件路径失败，第一次运行本程序需要指定-v/--vhd参数指定VHD文件路径以建立VHD文件路径缓存"
+        else:
+            assert self.build_cache(
+                vhd_path=vhd_path, fixvhdwr_path=fixvhdwr_path)
+
+        assert self.bin_path.exists(), f"将写入的二进制文件不存在!"
+        assert self.vhd_path.exists(), f"VHD文件不存在!"
+        assert self.fixvhdwr_path.exists(), f"FixVhdWr工具不存在!"
+
+    def run(self) -> None:
+        status = os.system(
+            command=f"{self.fixvhdwr_path} -a {self.lba} -w {self.vhd_path} -r {self.bin_path}"
+        )
+        if status == 0:
+            print(f"成功将 {self.bin_path} 写入 {self.vhd_path} 的 {self.lba} 区块")
+        else:
+            print("写入失败")
+
+    def load_cache(self) -> bool:
+        try:
+            if not self.config_path.exists():
+                self.config_path.parent.mkdir(parents=True, exist_ok=True)
+                return False
+            else:
+                with self.config_path.open(mode="r", encoding="UTF8") as f:
+                    config_dict: Dict[str, str] = json.load(f)
+
+                    self.vhd_path = Path(config_dict["vhd_path"]).absolute()
+                    self.fixvhdwr_path = Path(
+                        config_dict["fixvhdwr_path"]).absolute()
+                return True
+        except Exception as e:
+            print(f"由于 {e}, 未能成功加载缓存文件")
+
+    def build_cache(self, vhd_path: Optional[Path] = None, fixvhdwr_path: Optional[Path] = None) -> bool:
+        if self.config_path.exists():
+            with self.config_path.open(mode="r", encoding="UTF8") as f:
+                config_dict: Dict[str, str] = json.load(f)
+        else:
+            self.config_path.parent.mkdir(parents=True, exist_ok=True)
+            config_dict: Dict[str, str] = {}
+
+        if vhd_path is not None:
+            config_dict["vhd_path"] = str(vhd_path.absolute())
+            self.vhd_path = vhd_path
+        if fixvhdwr_path is not None:
+            config_dict["fixvhdwr_path"] = str(fixvhdwr_path.absolute())
+            self.fixvhdwr_path = fixvhdwr_path
+
+        # save
+        with self.config_path.open(mode="w", encoding="UTF8") as f:
+            json.dump(config_dict, f)
+        return True
+
+    @classmethod
+    def build_from_terminal(cls) -> "Main":
+        parser = argparse.ArgumentParser(
+            description="JackWang开发的为了方便CodingMaster开发所制作的小程序"
+        )
+        parser.add_argument("-a", type=int, default=0, dest="lba",
+                            help="写入的逻辑区块号(Logical Block Access, LBA)")
+        parser.add_argument("-v", "--vhd", type=str,
+                            default=None, dest="vhd_path", help="VHD文件路径")
+        parser.add_argument("-b", "--bin", type=str, required=True,
+                            dest="bin_path", help="将写入VHD文件的二进制文件路径")
+        parser.add_argument("-f", "--fixvhdwr", type=str, default=None,
+                            dest="fixvhdwr_path", help="FixVhdWr工具的路径")
+        ns = parser.parse_args()
+        return cls(
+            lba=ns.lba,
+            vhd_path=Path(ns.vhd_path) if ns.vhd_path is not None else None,
+            bin_path=Path(ns.bin_path),
+            fixvhdwr_path=Path(ns.fixvhdwr_path) if ns.fixvhdwr_path is not None else None
+        )
+
+
+if __name__ == "__main__":
+    Main.build_from_terminal().run()
