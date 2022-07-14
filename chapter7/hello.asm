@@ -1,6 +1,6 @@
 ; 显存地址
 mov ax, 0b800h
-mov dx, ax
+mov ds, ax
 
 ; 现存的寻址空间，屏幕就是显存映像
 mov byte [0x00], '2'

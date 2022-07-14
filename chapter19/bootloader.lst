@@ -1,0 +1,146 @@
+     1                                  HDDPORT equ 0x1f0
+     2                                  section code align=16 vstart=0x7c00
+     3                                      ; 主程序
+     4                                      ; 准备读取硬盘
+     5 00000000 3E8B36[B300]                mov si, word ds:[READSTART]
+     6 00000005 3E8B0E[B500]                mov cx, word ds:[READSTART + 0x02]
+     7 0000000A 31C0                        xor ax, ax
+     8 0000000C 3EA0[B700]                  mov al, byte ds:[SECTORNUM]
+     9 00000010 50                          push ax
+    10                                  
+    11                                      ; 准备写入内存
+    12                                      ; 8086是小端, 即低字节在低地址, 低地址放到ax, 高地址放到dx
+    13 00000011 3EA1[B800]                  mov ax, word ds:[DESTMEM]
+    14 00000015 3E8B16[BA00]                mov dx, word ds:[DESTMEM + 0x02]
+    15                                      ; 8086寻址方式是 物理地址 = 段寄存器左移四位(乘16) + 段内偏移
+    16                                      ; 所以还要给物理地址dx:ax除以16, 然后把得到的段地址送ds,
+    17                                      ; 后面直接ds:[段内偏移]或者[段内偏移]即可访问0x10000以后的内存
+    18 0000001A BB1000                      mov bx, 0x10
+    19 0000001D F7F3                        div bx
+    20                                      ; 除完了之后ax存放的就是段地址
+    21 0000001F 8ED8                        mov ds, ax
+    22                                  
+    23 00000021 31FF                        xor di, di
+    24 00000023 58                          pop ax
+    25                                  
+    26                                      ; 函数调用, 将程序加载到内存的0x10000处
+    27 00000024 E84700                      call ReadHDD
+    28                                  
+    29                                      ; 因为程序中的代码都是相对地址, 因此需要对其地址进行重定位, 转换到真实的物理地址
+    30                                      ; 读取程序段地址
+    31                                      ResetSegment:
+    32                                          ; 程序的代码段逻辑地址的段内偏移量
+    33 00000027 BB0400                          mov bx, 0x04
+    34                                  
+    35                                          ; 读取程序的段数, 为后面的循环重定位做准备
+    36 0000002A 31C9                            xor cx, cx
+    37 0000002C 3E8A0E1000                      mov cl, byte ds:[0x10]
+    38                                          .reset:
+    39                                              ; 读取代码/数据/栈段的逻辑地址
+    40 00000031 3E8B07                              mov ax, word ds:[bx]
+    41 00000034 3E8B5702                            mov dx, word ds:[bx + 2]
+    42                                              ; 汇编地址要转物理地址, 具体来说就是加上0x10000(因为把程度读到这里来了)
+    43 00000038 2E0306[B800]                        add ax, word [cs:DESTMEM]
+    44 0000003D 2E1316[BA00]                        adc dx, word [cs:DESTMEM + 2]
+    45                                  
+    46                                              ; 修改段地址:
+    47                                              ;     读取得到的地址是汇编地址, 而由于程序是被加载到了某个位置上去
+    48                                              ;     因此所以要先计算得到物理地址, 计算完了之后先保存回去
+    49                                              ;     一般右移四位即可, 这里除16
+    50 00000042 BE1000                              mov si, 0x10
+    51 00000045 F7F6                                div si
+    52 00000047 3E8907                              mov ds:[bx], ax
+    53                                              ; 转换下一个段地址
+    54 0000004A 83C304                              add bx, 4
+    55 0000004D E2E2                                loop .reset
+    56                                      
+    57                                      ResetEntry:
+    58 0000004F 3EA11300                        mov ax, word ds:[0x13]
+    59 00000053 3E8B161500                      mov dx, word ds:[0x15]
+    60 00000058 2E0306[B800]                    add ax, word [cs:DESTMEM]
+    61 0000005D 2E1316[BA00]                    adc dx, word [cs:DESTMEM + 2]
+    62                                  
+    63 00000062 BE1000                          mov si, 16
+    64 00000065 F7F6                            div si
+    65                                  
+    66 00000067 A31300                          mov [0x13], ax
+    67                                  
+    68                                          ; 低位两个字节一个字16位作ip, 高位两个字节一个字16位作cs
+    69 0000006A FF2E1100                        jmp far [0x11]
+    70                                  
+    71                                      ; 读取硬盘的函数
+    72                                      ReadHDD:
+    73 0000006E 50                              push ax
+    74 0000006F 53                              push bx
+    75 00000070 51                              push cx
+    76 00000071 52                              push dx
+    77                                  
+    78                                          ; HDD的端口标准
+    79                                          ; 读取的块数量写入0x1f2, 因为端口号超过了255, 所以要先把端口号放到dx寄存器中
+    80 00000072 BAF201                          mov dx, HDDPORT + 2
+    81                                          ; out指令将al中的内容送到dx中的端口中
+    82 00000075 EE                              out dx, al
+    83                                  
+    84                                          ; 起始逻辑块好的0-7位置, 写入0x1f3的位置
+    85 00000076 BAF301                          mov dx, HDDPORT + 3
+    86 00000079 89F0                            mov ax, si
+    87 0000007B EE                              out dx, al
+    88                                          ; 写入剩余的位置
+    89                                  
+    90 0000007C BAF401                          mov dx, HDDPORT + 4
+    91                                          ; 8-15位在ah
+    92 0000007F 88E0                            mov al, ah
+    93 00000081 EE                              out dx, al
+    94                                  
+    95 00000082 BAF501                          mov dx, HDDPORT + 5
+    96                                          ; 16-23位在cl
+    97 00000085 88C8                            mov al, cl
+    98 00000087 EE                              out dx, al
+    99                                  
+   100 00000088 BAF601                          mov dx, HDDPORT + 6
+   101                                          ; 24-32位在dh, 但是由于使用28位LBA, 所以取第四位即可
+   102 0000008B 88E8                            mov al, ch
+   103 0000008D B4E0                            mov ah, 0xe0
+   104 0000008F 08E0                            or al, ah
+   105 00000091 EE                              out dx, al
+   106                                  
+   107                                          ; 写入0x1f7, 表示要读硬盘
+   108 00000092 BAF701                          mov dx, HDDPORT + 7
+   109 00000095 B020                            mov al, 0x20
+   110 00000097 EE                              out dx, al
+   111                                  
+   112                                          ; 等待硬盘读取完毕
+   113                                          .waits:
+   114                                              ; 硬盘状态码在0x1f7端口上
+   115                                              ; mov dx, HDDPORT + 7
+   116 00000098 EC                                  in al, dx
+   117                                              ; 第3, 7位分别是1和0, 表示硬盘准备好了和硬盘不忙
+   118 00000099 2488                                and al, 0x88
+   119 0000009B 3C08                                cmp al, 0x08
+   120 0000009D 75F9                                jnz .waits
+   121                                          
+   122                                          ; 读取硬盘
+   123 0000009F BAF001                          mov dx, HDDPORT
+   124                                          ; 一次读取2字节, 需要读取512字节, 循环读取256次
+   125 000000A2 B90001                          mov cx, 256
+   126                                          .readword:
+   127 000000A5 ED                                  in ax, dx
+   128 000000A6 3E8905                              mov [ds:di], ax
+   129 000000A9 83C702                              add di, 2
+   130                                              ; 判断是否到结尾
+   131 000000AC E2F7                                loop .readword
+   132                                  
+   133                                          .return:
+   134 000000AE 5A                                  pop dx
+   135 000000AF 59                                  pop cx
+   136 000000B0 5B                                  pop bx
+   137 000000B1 58                                  pop ax
+   138 000000B2 C3                                  ret
+   139                                  
+   140 000000B3 01000000                READSTART dd 1
+   141 000000B7 01                      SECTORNUM db 1
+   142 000000B8 00000100                DESTMEM dd 0x10000
+   143                                  
+   144 000000BC EBFE                    BootloaderEnd: jmp BootloaderEnd
+   145 000000BE 00<rep 140h>            times 510 - ($ - $$) db 0
+   146 000001FE 55AA                            db 0x55, 0xaa

@@ -1,0 +1,158 @@
+     1                                  HDDPORT equ 0x1f0
+     2                                  NUL equ 0x00
+     3                                  CHARFONT equ 0x07
+     4                                  VIDEOMEM equ 0xb800
+     5                                  STRLEN equ 0xffff
+     6                                  
+     7                                  section code align=16 vstart=0x7c00
+     8                                      ; 主程序
+     9                                      ; 准备读取硬盘
+    10 00000000 8B36[A100]                  mov si, word [READSTART]
+    11 00000004 8B0E[A300]                  mov cx, word [READSTART + 0x02]
+    12 00000008 31C0                        xor ax, ax
+    13 0000000A A0[A500]                    mov al, [SECTORNUM]
+    14 0000000D 50                          push ax
+    15                                  
+    16                                      ; 准备写入内存
+    17                                      ; 8086是小端, 即低字节在低地址, 低地址放到ax, 高地址放到dx
+    18 0000000E A1[A600]                    mov ax, word [DESTMEM]
+    19 00000011 8B16[A800]                  mov dx, word [DESTMEM + 0x02]
+    20                                      ; 物理地址需要转换为逻辑地址, 即段号+段内偏移, 所以还要给值除以16, 8086每个段64K, 所以用四位表示段号
+    21 00000015 BB1000                      mov bx, 0x10
+    22 00000018 F7F3                        div bx
+    23                                      ; 除完了之后dx:ax存放的就是段号
+    24 0000001A 8ED8                        mov ds, ax
+    25                                  
+    26 0000001C 31FF                        xor di, di
+    27 0000001E 58                          pop ax
+    28                                  
+    29                                      ; 函数调用
+    30 0000001F E80800                      call ReadHDD
+    31 00000022 31F6                        xor si, si
+    32 00000024 E84C00                      call PrintString
+    33 00000027 E98000                      jmp end
+    34                                  
+    35                                      ; 读取硬盘的函数
+    36                                      ReadHDD:
+    37 0000002A 50                              push ax
+    38 0000002B 53                              push bx
+    39 0000002C 51                              push cx
+    40 0000002D 52                              push dx
+    41                                  
+    42                                          ; HDD的端口标准
+    43                                          ; 读取的块数量写入0x1f2, 因为端口号超过了255, 所以要先把端口号放到dx寄存器中
+    44 0000002E BAF201                          mov dx, HDDPORT + 2
+    45                                          ; out指令将al中的内容送到dx中的端口中
+    46 00000031 EE                              out dx, al
+    47                                  
+    48                                          ; 起始逻辑块好的0-7位置, 写入0x1f3的位置
+    49 00000032 BAF301                          mov dx, HDDPORT + 3
+    50 00000035 89F0                            mov ax, si
+    51 00000037 EE                              out dx, al
+    52                                          ; 写入剩余的位置
+    53                                  
+    54 00000038 BAF401                          mov dx, HDDPORT + 4
+    55                                          ; 8-15位在ah
+    56 0000003B 88E0                            mov al, ah
+    57 0000003D EE                              out dx, al
+    58                                  
+    59 0000003E BAF501                          mov dx, HDDPORT + 5
+    60                                          ; 16-23位在cl
+    61 00000041 88C8                            mov al, cl
+    62 00000043 EE                              out dx, al
+    63                                  
+    64 00000044 BAF601                          mov dx, HDDPORT + 6
+    65                                          ; 24-32位在dh, 但是由于使用28位LBA, 所以取第四位即可
+    66 00000047 88E8                            mov al, ch
+    67 00000049 0CE0                            or al, 0xe0
+    68 0000004B EE                              out dx, al
+    69                                  
+    70                                          ; 写入0x1f7, 表示要读硬盘
+    71 0000004C BAF701                          mov dx, HDDPORT + 7
+    72 0000004F B020                            mov al, 0x20
+    73 00000051 EE                              out dx, al
+    74                                  
+    75                                          ; 等待硬盘读取完毕
+    76                                          .waits:
+    77                                              ; 硬盘状态码在0x1f7端口上
+    78 00000052 BAF701                              mov dx, HDDPORT + 7
+    79 00000055 EC                                  in al, dx
+    80                                              ; 第3, 7位分别是1和0, 表示硬盘准备好了和硬盘不忙
+    81 00000056 2488                                and al, 0x88
+    82 00000058 3C08                                cmp al, 0x08
+    83 0000005A 75F6                                jnz .waits
+    84                                          
+    85                                          ; 读取硬盘
+    86 0000005C BAF001                          mov dx, HDDPORT
+    87                                          ; 一次读取2字节, 需要读取512字节, 循环读取256次
+    88 0000005F B90001                          mov cx, 256
+    89                                          .readword:
+    90 00000062 ED                                  in ax, dx
+    91 00000063 3E8905                              mov [ds:di], ax
+    92 00000066 83C702                              add di, 2
+    93                                              ; 判断是否到结尾
+    94 00000069 80CC00                              or ah, 0x00
+    95 0000006C 75F4                                jnz .readword
+    96                                  
+    97                                          .return:
+    98 0000006E 5A                                  pop dx
+    99 0000006F 59                                  pop cx
+   100 00000070 5B                                  pop bx
+   101 00000071 58                                  pop ax
+   102 00000072 C3                                  ret
+   103                                  
+   104                                      ; 打印字符串的函数
+   105                                      PrintString:
+   106                                          .setup:
+   107                                          ; 保存通用寄存器
+   108 00000073 50                              push ax
+   109 00000074 53                              push bx
+   110 00000075 51                              push cx
+   111 00000076 56                              push si
+   112 00000077 57                              push di
+   113 00000078 8CC0                            mov ax, es
+   114 0000007A 50                              push ax
+   115                                  
+   116                                          ; 显存地址
+   117 0000007B B800B8                          mov ax, VIDEOMEM
+   118 0000007E 8EC0                            mov es, ax
+   119                                  
+   120                                          ; 字符属性, 黑底白字
+   121 00000080 B707                            mov bh, CHARFONT
+   122 00000082 B9FFFF                          mov cx, STRLEN
+   123                                  
+   124                                          ; 输出单个字符
+   125                                          .printchar:
+   126                                              ; 读字符
+   127 00000085 3E8A1C                              mov bl, [ds:si]
+   128 00000088 46                                  inc si
+   129                                              ; 写显存
+   130 00000089 26881D                              mov [es:di], bl
+   131                                              ; 写字符属性
+   132 0000008C 47                                  inc di
+   133 0000008D 26883D                              mov [es:di], bh
+   134 00000090 47                                  inc di
+   135 00000091 80FB00                              cmp bl, NUL
+   136 00000094 7402                                jz .return
+   137 00000096 E2ED                                loop .printchar
+   138                                          .return:
+   139 00000098 58                                  pop ax
+   140 00000099 8EC0                                mov es, ax
+   141 0000009B 5F                                  pop di
+   142 0000009C 5E                                  pop si
+   143 0000009D 59                                  pop cx
+   144 0000009E 5B                                  pop bx
+   145 0000009F 58                                  pop ax
+   146 000000A0 C3                                  ret
+   147                                  ; section data align=16
+   148                                  ; LBA28用28个比特位表示读写的逻辑块编号, 所以需要一个double byte 32位来保存开始读取的逻辑块的编号
+   149 000000A1 0A000000                READSTART dd 10
+   150                                  ; 读取1个块
+   151 000000A5 01                      SECTORNUM db 1
+   152                                  ; 写入内存的物理地址, 8086CPU是20位寻址, 大于16, 小于32, 所以是double byte
+   153 000000A6 00000100                DESTMEM dd 0x10000
+   154                                  
+   155                                  
+   156 000000AA EBFE                    end: jmp end
+   157 000000AC 00<rep 152h>            times 510- ($ - $$) db 0
+   158 000001FE 55AA                                        db 0x55, 0xAA
