@@ -1,0 +1,226 @@
+     1                                  ; 字符常量
+     2                                  CR equ 0x0d
+     3                                  LF equ 0x0a
+     4                                  NUL equ 0x00
+     5                                  CHARFONT equ 0x07
+     6                                  VIDEOMEM equ 0xb800
+     7                                  STRLEN equ 0xffff
+     8                                  
+     9                                  section head align=16 vstart=0
+    10                                      ; Length    Address
+    11                                      ; 4B        0x00
+    12 00000000 [00000000]                  Size dd ProgramEnd
+    13                                  
+    14                                      SegmentAddr:
+    15                                          ; Length    Address
+    16                                          ; 4B        0x04
+    17 00000004 [00000000]                      CodeSeg dd section.code.start   ; nasm提供的伪操作
+    18                                          ; 4B        0x08
+    19 00000008 [00000000]                      DataSeg dd section.data.start
+    20                                          ; 4B        0x0c
+    21 0000000C [00000000]                      StackSeg dd section.stack.start
+    22                                  
+    23                                      SegmentNum:
+    24                                          ; Length    Address
+    25                                          ; 1B        0x10
+    26 00000010 03                              SegNum db (SegmentNum - SegmentAddr) / 4
+    27                                  
+    28                                      ; 程序入口 = 段地址:偏移地址
+    29                                          ; Length    Address
+    30                                          ; 2B        0x11
+    31 00000011 [0000]                      Enrty dw Main
+    32                                          ; 4B        0x13
+    33 00000013 [00000000]                      dd section.code.start
+    34                                  
+    35                                  section code align=16 vstart=0
+    36                                      Main:
+    37                                          ; 初始化段寄存器
+    38 00000000 A1[0C00]                        mov ax, [StackSeg]
+    39 00000003 8ED0                            mov ss, ax
+    40 00000005 BC[8000]                        mov sp, StackEnd
+    41 00000008 31F6                            xor si, si
+    42                                          ; 最后在设置数据寄存器
+    43 0000000A A1[0800]                        mov ax, [DataSeg]
+    44 0000000D 8ED8                            mov ds, ax
+    45                                  
+    46 0000000F E80500                          call ClearScreen
+    47 00000012 E81B00                          call PrintString
+    48                                  
+    49 00000015 EBFE                            MainEnd: jmp MainEnd
+    50                                      
+    51                                      ; 清屏函数
+    52                                      ClearScreen:
+    53 00000017 B800B8                          mov ax, VIDEOMEM
+    54 0000001A 8EC0                            mov es, ax
+    55 0000001C 31FF                            xor di, di
+    56 0000001E B320                            mov bl, ' '
+    57 00000020 B707                            mov bh, CHARFONT
+    58 00000022 B9D007                          mov cx, 2000
+    59                                  
+    60                                          .putSpace:
+    61 00000025 26881D                              mov es:[di], bl
+    62 00000028 47                                  inc di
+    63 00000029 26883D                              mov es:[di], bh
+    64 0000002C 47                                  inc di
+    65 0000002D E2F6                                loop .putSpace
+    66                                  
+    67 0000002F C3                              ret
+    68                                  
+    69                                      ; 打印字符串的函数
+    70                                      PrintString:
+    71                                          .setup:
+    72                                          ; 保存通用寄存器
+    73 00000030 50                              push ax
+    74 00000031 53                              push bx
+    75 00000032 51                              push cx
+    76 00000033 52                              push dx
+    77 00000034 56                              push si
+    78 00000035 57                              push di
+    79 00000036 8CC0                            mov ax, es
+    80 00000038 50                              push ax
+    81                                  
+    82                                          ; 显存地址
+    83 00000039 B800B8                          mov ax, VIDEOMEM
+    84 0000003C 8EC0                            mov es, ax
+    85 0000003E 31FF                            xor di, di
+    86                                  
+    87                                          ; 字符属性, 黑底白字
+    88 00000040 B707                            mov bh, CHARFONT
+    89 00000042 B9FFFF                          mov cx, STRLEN
+    90                                  
+    91                                          ; 输出单个字符
+    92                                          .printchar:
+    93                                              ; 读字符
+    94 00000045 3E8A1C                              mov bl, [ds:si]
+    95                                  
+    96                                              ; 显示特殊字符
+    97                                              ; 是否为回车
+    98 00000048 80FB0D                              cmp bl, CR
+    99 0000004B 741A                                jz .putcr
+   100                                              ; 是否为换行
+   101 0000004D 80FB0A                              cmp bl, LF
+   102 00000050 7426                                jz .putlf
+   103                                  
+   104                                              ; 是否到结尾
+   105 00000052 80FB00                              cmp bl, NUL
+   106 00000055 742B                                jz .return
+   107                                  
+   108                                              ; 写正常字符
+   109 00000057 46                                  inc si
+   110                                  
+   111                                              ; 写显存
+   112 00000058 26881D                              mov [es:di], bl
+   113                                              ; 写字符属性
+   114 0000005B 47                                  inc di
+   115 0000005C 26883D                              mov [es:di], bh
+   116 0000005F 47                                  inc di
+   117                                              
+   118                                              ; 移动光标
+   119 00000060 E82900                              call SetCursor
+   120 00000063 EB00                                jmp .putNext
+   121                                  
+   122                                          .putNext:
+   123 00000065 E2DE                                loop .printchar
+   124                                  
+   125                                          .putcr:
+   126                                              ; dos的设置一行80个字符, 每个字符一个字节存储ASCII码, 一个字符存储字符属性
+   127                                              ; 所以160个字节一行字符
+   128 00000067 B3A0                                mov bl, 160
+   129                                              ; di指向当前显存处
+   130 00000069 89F8                                mov ax, di
+   131                                              ; 计算得到当前行, 商放在ah处, 余数放在al处
+   132 0000006B F6F3                                div bl
+   133 0000006D C1E808                              shr ax, 8
+   134                                              ; 移动指针到行首
+   135 00000070 29C7                                sub di, ax
+   136 00000072 E81700                              call SetCursor
+   137 00000075 46                                  inc si
+   138 00000076 EBED                                jmp .putNext
+   139                                  
+   140                                          .putlf:
+   141                                              ; 160个字节一行字符, 直接加160到下一行
+   142 00000078 81C7A000                            add di, 160
+   143 0000007C E80D00                              call SetCursor
+   144 0000007F 46                                  inc si
+   145 00000080 EBE3                                jmp .putNext
+   146                                  
+   147                                          .return:
+   148 00000082 58                                  pop ax
+   149 00000083 8EC0                                mov es, ax
+   150 00000085 5F                                  pop di
+   151 00000086 5E                                  pop si
+   152 00000087 5A                                  pop dx
+   153 00000088 59                                  pop cx
+   154 00000089 5B                                  pop bx
+   155 0000008A 58                                  pop ax
+   156 0000008B C3                                  ret
+   157                                      
+   158                                      ; 设置光标的函数, 光标的位置要放在bx中, dos标准80列25行,  bx的值对80取余就是列号, 整除就是行号
+   159                                      SetCursor:
+   160                                          ; 保存寄存器
+   161 0000008C 50                              push ax
+   162 0000008D 52                              push dx
+   163 0000008E 53                              push bx
+   164                                  
+   165                                          ; di是当前的字符指针(字符ASCII+字符属性)的位置
+   166 0000008F 89F8                            mov ax, di
+   167 00000091 BB0200                          mov bx, 2
+   168 00000094 F7F3                            div bx
+   169                                          ; 读取光标当前的位置, 计算得到光标的位置
+   170 00000096 89C3                            mov bx, ax
+   171                                  
+   172                                          ; 端口清零, 准备访问显卡端口
+   173 00000098 BA0000                          mov dx, 0
+   174                                          ; 写显卡的0x3d4端口, 内容为中稍后0x3d5端口送来的数据写到显卡的哪个寄存器
+   175 0000009B BAD403                          mov dx, 0x3d4
+   176 0000009E B00E                            mov al, 0x0e
+   177                                          ; 向0x3d4端口发送0x0e表示稍后向0x3d5写得输入将写入显卡的0x0e寄存器
+   178                                          ; 0x0e寄存器是光标的高八位地址, 0x0f是光标的低八位地址
+   179 000000A0 EE                              out dx, al
+   180                                  
+   181                                          ; 写高八位数据
+   182 000000A1 BAD503                          mov dx, 0x3d5
+   183 000000A4 88F8                            mov al, bh
+   184 000000A6 EE                              out dx, al
+   185                                  
+   186                                          ; 准备写低八位地址
+   187 000000A7 BAD403                          mov dx, 0x3d4
+   188 000000AA B00F                            mov al, 0x0f
+   189 000000AC EE                              out dx, al
+   190                                  
+   191                                          ; 写低八位数据
+   192 000000AD BAD503                          mov dx, 0x3d5
+   193 000000B0 88D8                            mov al, bl
+   194 000000B2 EE                              out dx, al
+   195                                  
+   196                                          ; 恢复寄存器
+   197 000000B3 5B                              pop bx
+   198 000000B4 5A                              pop dx
+   199 000000B5 58                              pop ax
+   200 000000B6 C3                              ret
+   201                                  
+   202                                  section data align=16 vstart=0
+   203 00000000 48656C6C6F2C204920-         Hello db "Hello, I come from program on section 1 with new strings, loaded by bootloader!"
+   203 00000009 636F6D652066726F6D-
+   203 00000012 2070726F6772616D20-
+   203 0000001B 6F6E2073656374696F-
+   203 00000024 6E2031207769746820-
+   203 0000002D 6E657720737472696E-
+   203 00000036 67732C206C6F616465-
+   203 0000003F 6420627920626F6F74-
+   203 00000048 6C6F6164657221     
+   204 0000004F 0D0A                            db CR, LF
+   205 00000051 486168612C20546869-             db "Haha, This is a new line!"
+   205 0000005A 732069732061206E65-
+   205 00000063 77206C696E6521     
+   206 0000006A 0A                              db LF
+   207 0000006B 4A757374203061                  db "Just 0a"
+   208 00000072 0D                              db CR
+   209 00000073 4A757374203064                  db "Just 0d"
+   210 0000007A 0D0A                            db CR, LF
+   211 0000007C 00                              db 0x00
+   212                                  section stack align=16 vstart=0
+   213 00000000 00<rep 80h>                 times 128 db 0
+   214                                      StackEnd:
+   215                                  section end align=16
+   216                                      ProgramEnd:
